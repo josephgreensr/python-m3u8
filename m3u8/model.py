@@ -336,8 +336,9 @@ class Segment(BasePathMixin):
     '''
 
     def __init__(self, uri, base_uri, program_date_time=None, duration=None,
-                 title=None, byterange=None, cue_out=False, discontinuity=False, key=None,
-                 scte35=None, scte35_duration=None, keyobject=None):
+                 title=None, byterange=None, discontinuity=False, key=None,
+                 cue_out=False, cue_start=False, cue_in=False, caid=None, scte35=None,
+                 scte35_event_id=None, scte35_duration=None, scte35_elapsed=None, keyobject=None):
         self.uri = uri
         self.duration = duration
         self.title = title
@@ -346,29 +347,60 @@ class Segment(BasePathMixin):
         self.program_date_time = program_date_time
         self.discontinuity = discontinuity
         self.cue_out = cue_out
+        self.cue_in = cue_in
+        self.cue_start = cue_start
+        self.caid = caid
         self.scte35 = scte35
         self.scte35_duration = scte35_duration
+        self.scte35_elapsed = scte35_elapsed
+        self.scte35_event_id = scte35_event_id
         self.key = keyobject
         # Key(base_uri=base_uri, **key) if key else None
 
     def dumps(self, last_segment):
         output = []
-        if last_segment and self.key != last_segment.key:
-            output.append(str(self.key))
-            output.append('\n')
-        else:
-            # The key must be checked anyway now for the first segment
-            if self.key and last_segment is None:
+
+        if not self.key.method == "NONE":
+            if last_segment and self.key and self.key != last_segment.key:
                 output.append(str(self.key))
                 output.append('\n')
+            else:
+                # The key must be checked anyway now for the first segment
+                if self.key and last_segment is None:
+                    output.append(str(self.key))
+                    output.append('\n')
 
         if self.discontinuity:
             output.append('#EXT-X-DISCONTINUITY\n')
             if self.program_date_time:
                 output.append('#EXT-X-PROGRAM-DATE-TIME:%s\n' %
                               format_date_time(self.program_date_time))
-        if self.cue_out:
-            output.append('#EXT-X-CUE-OUT-CONT\n')
+        if self.cue_start and self.scte35_duration:
+            if self.caid:
+                output.append('#EXT-X-ASSET:CAID={}\n'.format(self.caid))
+            output.append('#EXT-X-CUE-OUT:{}\n'.format(self.scte35_duration))
+        elif self.cue_in:
+            output.append('#EXT-X-CUE-IN\n')
+        elif self.cue_out:
+            msg = '#EXT-X-CUE-OUT-CONT:'
+            if self.scte35_elapsed:
+                msg += "ElapsedTime={},".format(self.scte35_elapsed)
+            if self.scte35_elapsed:
+                msg += "Duration={},".format(self.scte35_duration)
+            if self.caid:
+                msg += "CAID={},".format(self.caid)
+            msg += "\n"
+            output.append(msg)
+
+        if self.scte35 and (self.cue_in or self.cue_start):
+            msg = '#EXT-X-SCTE35:CUE="{}"'.format(self.scte35)
+            if self.scte35_event_id:
+                msg += ',ID="{}"'.format(self.scte35_event_id)
+            msg += "\n"
+            output.append(msg)
+
+        
+
         output.append('#EXTINF:%s,' % int_or_float_to_string(self.duration))
         if self.title:
             output.append(quoted(self.title))

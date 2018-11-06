@@ -87,19 +87,31 @@ def parse(content, strict=False):
         elif line.startswith(protocol.ext_x_discontinuity):
             state['discontinuity'] = True
 
+        elif line.startswith(protocol.ext_x_asset):
+            state['current_cue_out_caid'] = _parse_attribute(line, "CAID")
+
         elif line.startswith(protocol.ext_x_cue_out):
             _parse_cueout(line, state)
             state['cue_out'] = True
-            state['cue_start'] = True
+            state['cue_start'] = False
 
         elif line.startswith(protocol.ext_x_cue_out_start):
             _parse_cueout_start(line, state, string_to_lines(content)[lineno - 2])
             state['cue_out'] = True
             state['cue_start'] = True
 
+        elif line.startswith(protocol.ext_x_scte35):
+            _parse_cueout_start(line, state, string_to_lines(content)[lineno - 2])
+            state['cue_out'] = True
+
         elif line.startswith(protocol.ext_x_cue_span):
             state['cue_out'] = True
             state['cue_start'] = True
+
+        elif line.startswith(protocol.ext_x_cue_end):
+            state['cue_out'] = False
+            state['cue_start'] = False
+            state['cue_in'] = True
 
         elif line.startswith(protocol.ext_x_version):
             _parse_simple_parameter(line, data)
@@ -206,9 +218,17 @@ def _parse_ts_chunk(line, data, state):
         state['current_program_date_time'] += datetime.timedelta(seconds=segment['duration'])
     segment['uri'] = line
     segment['cue_out'] = state.pop('cue_out', False)
-    if state.get('current_cue_out_scte35'):
+    segment['cue_in'] = state.pop('cue_in', False)
+    segment['cue_start'] = state.pop('cue_start', False) 
+
+    if segment.get('cue_out') and state.get('current_cue_out_scte35'):
         segment['scte35'] = state['current_cue_out_scte35']
         segment['scte35_duration'] = state['current_cue_out_duration']
+        segment['scte35_elapsed'] = state.pop('current_cue_out_elapsed', 0)
+        segment['caid'] = state.pop('current_cue_out_caid', None)
+        segment['scte35_event_id'] = state.get(
+            'current_cue_out_event_id')
+
     segment['discontinuity'] = state.pop('discontinuity', False)
     if state.get('current_key'):
         segment['key'] = state['current_key']
@@ -218,6 +238,13 @@ def _parse_ts_chunk(line, data, state):
             data['keys'].append(None)
     data['segments'].append(segment)
 
+def _parse_attribute(line, attr):
+
+    m = re.match('.*{}="?([^",]+)"?.*'.format(attr), line)
+    if m:
+        return m.group(1)
+    else:
+        return None
 
 def _parse_attribute_list(prefix, line, atribute_parser):
     params = ATTRIBUTELISTPATTERN.split(line.replace(prefix + ':', ''))[1::2]
@@ -293,17 +320,45 @@ def _parse_simple_parameter(line, data, cast_to=str):
 
 
 def _parse_cueout(line, state):
-    param, value = line.split(':', 1)
-    res = re.match('.*Duration=(.*),SCTE35=(.*)$', value)
-    if res:
-        state['current_cue_out_duration'] = res.group(1)
-        state['current_cue_out_scte35'] = res.group(2)
+    elapsed = _parse_attribute(line, "ElapsedTime")
+    duration = _parse_attribute(line, "Duration")
+    caid = _parse_attribute(line, "CAID")
+    scte35 = _parse_attribute(line, "SCTE35")
+
+    if elapsed:
+        state['current_cue_out_elapsed'] = elapsed
+    if duration:
+        state['current_cue_out_duration'] = duration
+    if caid:
+        state['current_cue_out_caid'] = caid
+    if scte35:
+        state['current_cue_out_scte35'] = scte35
+
+def _cueout_scte35_standard(line, state, prevline):
+
+    duration = None
+    attrs = {}
+    cue = _parse_attribute(line, "CUE")
+
+    attrs['event_id'] = _parse_attribute(line, "ID")
+
+    dur_m = re.match('#EXT-X-CUE-OUT:(.*)', prevline)
+    if dur_m:
+        duration = dur_m.group(1)
+
+    if not duration:
+        duration = _parse_attribute(prevline, "Duration")
+
+    if cue or duration:
+        return (cue, duration, "scte35_standard", attrs)
+    else:
+        return None
 
 def _cueout_elemental(line, state, prevline):
     param, value = line.split(':', 1)
     res = re.match('.*EXT-OATCLS-SCTE35:(.*)$', prevline)
     if res:
-        return (res.group(1), value)
+        return (res.group(1), value, "elemental")
     else:
         return None
 
@@ -311,15 +366,19 @@ def _cueout_envivio(line, state, prevline):
     param, value = line.split(':', 1)
     res = re.match('.*DURATION=(.*),.*,CUE="(.*)"', value)
     if res:
-        return (res.group(2), res.group(1))
+        return (res.group(2), res.group(1), "envivio")
     else:
         return None
 
 def _parse_cueout_start(line, state, prevline):
-    _cueout_state = _cueout_elemental(line, state, prevline) or _cueout_envivio(line, state, prevline)
+    _cueout_state = _cueout_elemental(line, state, prevline) or _cueout_envivio(
+        line, state, prevline) or _cueout_scte35_standard(line, state, prevline)
     if _cueout_state:
         state['current_cue_out_scte35'] = _cueout_state[0]
         state['current_cue_out_duration'] = _cueout_state[1]
+        state['current_cue_out_type'] = _cueout_state[2]
+        if state.get("current_cue_out_type") == "scte35_standard":
+            state['current_cue_out_event_id'] = _cueout_state[3].get("event_id")
 
 
 def string_to_lines(string):
