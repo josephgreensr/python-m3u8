@@ -14,7 +14,7 @@
 m3u8
 ====
 
-Python `m3u8`_ parser.
+Python `m3u8`_ parser. Forked from https://github.com/globocom
 
 Documentation
 =============

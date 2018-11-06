@@ -12,13 +12,15 @@ setup(
     name="m3u8",
     author='Globo.com',
     author_email='videos3@corp.globo.com',
-    version="0.3.6",
+    maintainer='Turner.com',
+    maintainer_email='contentplatforms@turner.com',
+    version="0.1.0",
     license='MIT',
     zip_safe=False,
     include_package_data=True,
     install_requires=install_reqs,
     packages=["m3u8"],
-    url="https://github.com/globocom/m3u8",
+    url="https://github.com/turnercode/python-m3u8",
     description="Python m3u8 parser",
     long_description=long_description
     )
